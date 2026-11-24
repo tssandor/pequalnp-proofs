@@ -151,6 +151,47 @@ theorem clean_or_inputs (C : Circuit) (ao : IsAO2 26 C) (j : ℕ) (hj : j < C.si
     exact ⟨_,List.mem_map_of_mem hi,yes⟩
   exact Bool.false_ne_true (val.trans any)
 
+theorem and_operands_split (C : Circuit) (ao : IsAO2 26 C) (j : ℕ) (hj : j < C.size)
+    (op : (gateAt C j).op = GateOp.and) (a b : ℕ) (args : (gateAt C j).inputs = [a,b])
+    (essential : ∀ w ∈ (gateAt C j).inputs, ∃ Q ∈ qFamily, wire C (26+j) (qInput Q) ≠ wire C w (qInput Q)) :
+    (∃ Q ∈ qFamily, wire C a (qInput Q) = true ∧ wire C b (qInput Q) = false) ∧
+    (∃ Q ∈ qFamily, wire C a (qInput Q) = false ∧ wire C b (qInput Q) = true) := by
+  have gate (Q : Finset (Fin 13)) :
+      wire C (26+j) (qInput Q) = (wire C a (qInput Q) && wire C b (qInput Q)) := by
+    rw [(gateData C ao j hj).2.2.2 _ (by simp [qInput]),op,args]
+    simp [GateOp.eval]
+  obtain ⟨A,hA,ha⟩ := essential a (by simp [args])
+  obtain ⟨B,hB,hb⟩ := essential b (by simp [args])
+  rw [gate] at ha hb
+  exact ⟨⟨A,hA,by cases h1 : wire C a (qInput A) <;> cases h2 : wire C b (qInput A) <;> simp_all⟩,
+    ⟨B,hB,by cases h1 : wire C a (qInput B) <;> cases h2 : wire C b (qInput B) <;> simp_all⟩⟩
+
+theorem cleanAndCover (C : Circuit) (ao : IsAO2 26 C) (x : List Bool) (len : x.length=26) :
+    ∀ w : ℕ, CleanWire C w → wire C w x = true →
+      ∃ j < C.size, (gateAt C j).op = GateOp.and ∧ CleanWire C (26+j) ∧ wire C (26+j) x = true := by
+  intro w
+  induction w using Nat.strong_induction_on with
+  | ind w ih =>
+    intro clean yes
+    by_cases raw : w < 26
+    · exact (rawDirty C w raw clean).elim
+    by_cases large : 26+C.size ≤ w
+    · have no : wire C w x = false := foldl_step_getD_ge C.gates x w (by simpa [Circuit.size,len] using large)
+      exact Bool.false_ne_true (no.symm.trans yes) |>.elim
+    let j := w-26
+    have hj : j < C.size := by dsimp [j]; omega
+    have eq : w = 26+j := by dsimp [j]; omega
+    obtain ⟨_,a|o,_,hv⟩ := gateData C ao j hj
+    · exact ⟨j,hj,a,eq ▸ clean,eq ▸ yes⟩
+    · have cs := clean_or_inputs C ao j hj o (eq ▸ clean)
+      have hv' := hv x len
+      rw [←eq,yes,o] at hv'
+      have someval : ((gateAt C j).inputs.map fun i => wire C i x).any id = true := hv'.symm
+      obtain ⟨v,mem,t⟩ := List.any_eq_true.mp someval
+      obtain ⟨i,hi,rfl⟩ := List.mem_map.mp mem
+      exact ih i (eq ▸ ao.2.1 j hj i hi) (cs i hi) t
+
+
 abbrev terminal (C : Circuit) (w : ℕ) := ∃ j < C.size, w = 26+j ∧ (gateAt C j).op = GateOp.and
 
 noncomputable def cleanOrs (C : Circuit) (k : ℕ) : Finset ℕ := by
@@ -308,6 +349,90 @@ theorem cleanBudget (C : Circuit) (J : Finset ℕ)
   have bound := Finset.card_le_card sub
   rw [Finset.card_union_of_disjoint disj,Finset.card_range] at bound
   omega
+
+end PEqualNP.Outside.QuadrangleCleanFrontier_aux
+
+namespace PEqualNP.Outside.QuadrangleCleanFrontier_aux
+
+open PEqualNP.CircuitLowerBounds PEqualNP.MetaComplexity.NestedCover PEqualNP.TopForm PEqualNP.HeptadCover
+
+abbrev pairRow (p l : Fin 13) : List Bool :=
+  (List.ofFn fun i : Fin 13 => decide (i = p)) ++ List.ofFn fun i : Fin 13 => decide (i = l)
+
+def profile (C : Circuit) (w : ℕ) := qFamily.filter fun Q => wire C w (qInput Q) = true
+
+theorem clean_operands (C : Circuit) (ao : IsAO2 26 C) (j : ℕ) (hj : j < C.size)
+    (op : (gateAt C j).op = GateOp.and) (a b : ℕ) (args : (gateAt C j).inputs = [a,b])
+    (clean : CleanWire C (26+j))
+    (essential : ∀ w ∈ (gateAt C j).inputs, ∃ Q ∈ qFamily, wire C (26+j) (qInput Q) ≠ wire C w (qInput Q)) :
+    (profile C a).Nonempty ∧ (profile C b).Nonempty ∧ Disjoint (profile C a) (profile C b) := by
+  obtain ⟨⟨A,hA,ha,_⟩,⟨B,hB,_,hb⟩⟩ := and_operands_split C ao j hj op a b args essential
+  refine ⟨⟨A,Finset.mem_filter.mpr ⟨hA,ha⟩⟩,⟨B,Finset.mem_filter.mpr ⟨hB,hb⟩⟩,?_⟩
+  apply Finset.disjoint_left.mpr
+  intro Q thisA thisB
+  obtain ⟨hQ,hitA⟩ := Finset.mem_filter.mp thisA
+  have hitB := (Finset.mem_filter.mp thisB).2
+  have v := (gateData C ao j hj).2.2.2 (qInput Q) (by simp [qInput])
+  rw [clean Q hQ,op,args] at v
+  simp only [List.map_cons,List.map_nil,hitA,hitB] at v
+  exact Bool.noConfusion v
+
+theorem bothActive (C : Circuit) (ao : IsAO2 26 C) (j : ℕ) (hj : j < C.size)
+    (op : (gateAt C j).op = GateOp.and) (x : List Bool) (len : x.length=26) :
+    wire C (26+j) x = true ↔ ∀ w ∈ (gateAt C j).inputs.toFinset, wire C w x = true := by
+  rw [(gateData C ao j hj).2.2.2 x len,op]
+  simp [GateOp.eval]
+
+abbrev coversPairs (C : Circuit) (K : Finset ℕ) :=
+  ∀ p l : Fin 13, p ∈ singerLines3 l → ∃ j ∈ K, wire C (26+j) (pairRow p l) = true
+
+private theorem minimalCover (C : Circuit) (J : Finset ℕ) (coverage : coversPairs C J) :
+    ∃ K ⊆ J, coversPairs C K ∧ ∀ j ∈ K, ∃ p l : Fin 13, p ∈ singerLines3 l ∧
+      wire C (26+j) (pairRow p l) = true ∧ ∀ k ∈ K, k ≠ j → wire C (26+k) (pairRow p l) = false := by
+  classical
+  let candidates := J.powerset.filter fun K => coversPairs C K
+  have start : J ∈ candidates := Finset.mem_filter.mpr ⟨Finset.mem_powerset.mpr Finset.Subset.rfl,coverage⟩
+  obtain ⟨K,hK,least⟩ := candidates.exists_min_image Finset.card ⟨J,start⟩
+  obtain ⟨sub,cover⟩ := Finset.mem_filter.mp hK
+  refine ⟨K,Finset.mem_powerset.mp sub,cover,?_⟩
+  intro j hj
+  have lost : ¬coversPairs C (K.erase j) := by
+    intro still
+    have allowed : K.erase j ∈ candidates := Finset.mem_filter.mpr
+      ⟨Finset.mem_powerset.mpr (fun z hz => Finset.mem_powerset.mp sub (Finset.mem_of_mem_erase hz)),still⟩
+    have low := least _ allowed
+    have small := Finset.card_erase_lt_of_mem hj
+    omega
+  unfold coversPairs at lost
+  push Not at lost
+  obtain ⟨p,l,hpl,off⟩ := lost
+  obtain ⟨k,hk,on⟩ := cover p l hpl
+  have eq : k = j := by
+    by_contra ne
+    exact off k (Finset.mem_erase.mpr ⟨ne,hk⟩) on
+  refine ⟨p,l,hpl,eq ▸ on,?_⟩
+  intro z hz ne
+  exact Bool.eq_false_iff.mpr (off z (Finset.mem_erase.mpr ⟨ne,hz⟩))
+
+theorem privateFrontier (C : Circuit) (ao : IsAO2 26 C) (J : Finset ℕ)
+    (data : ∀ j ∈ J, j < C.size ∧ (gateAt C j).op = GateOp.and) (coverage : coversPairs C J) :
+    ∃ K ⊆ J, coversPairs C K ∧
+      (∀ j ∈ K, ∃ p l : Fin 13, p ∈ singerLines3 l ∧ wire C (26+j) (pairRow p l) = true ∧
+        ∀ k ∈ K, k ≠ j → wire C (26+k) (pairRow p l) = false) ∧
+      Set.InjOn (fun j => (gateAt C j).inputs.toFinset) (K : Set ℕ) := by
+  obtain ⟨K,sub,cover,priv⟩ := minimalCover C J coverage
+  refine ⟨K,sub,cover,priv,?_⟩
+  intro i hi j hj same
+  by_contra ne
+  obtain ⟨p,l,_,yes,others⟩ := priv i hi
+  have hno := others j hj (Ne.symm ne)
+  have di := data i (sub hi)
+  have dj := data j (sub hj)
+  have left := (bothActive C ao i di.1 di.2 (pairRow p l) (by simp [pairRow])).mp yes
+  change (gateAt C i).inputs.toFinset = (gateAt C j).inputs.toFinset at same
+  rw [same] at left
+  have other := (bothActive C ao j dj.1 dj.2 (pairRow p l) (by simp [pairRow])).mpr left
+  exact Bool.false_ne_true (hno.symm.trans other)
 
 end PEqualNP.Outside.QuadrangleCleanFrontier_aux
 

@@ -648,9 +648,13 @@ theorem incoming_bound {j : ℕ} (hC : Monotone2 C) (hj : j ∈ living n C) :
   exact (Finset.card_le_card hsub).trans (g.inputs.toFinset_card_le.trans
     (hC g (List.mem_of_getElem? hg)).2)
 
+noncomputable def excess (n : ℕ) (C : Circuit) : ℕ := by
+  classical
+  exact ∑ a ∈ living n C, ((readers n C a).card - 2)
+
 theorem branch_budget (hC : Monotone2 C) (he : GraphEval C G)
     (hdegree : ∀ v : Fin n, ∃ u, G.Adj v u) (ho : C.output ∈ living n C) :
-    open Classical in n + ((living n C).filter (Branch n C)).card ≤ C.size + 1 := by
+    open Classical in n + ((living n C).filter (Branch n C)).card + excess n C ≤ C.size + 1 := by
   classical
   let W := living n C
   let S := W.filter (fun a => ¬ a < n)
@@ -691,7 +695,8 @@ theorem branch_budget (hC : Monotone2 C) (he : GraphEval C G)
     obtain ⟨b,hb⟩ := Finset.card_pos.1 hgt
     have hs := mem_readers.1 hb
     exact (Nat.not_lt_of_ge (next_le hs.2)) hs.1.1
-  have hlow : R.card+B.card ≤ ∑ a ∈ W, (readers n C a).card := by
+  have hlow : R.card+B.card+excess n C ≤ ∑ a ∈ W, (readers n C a).card := by
+    change R.card+B.card+(∑ a ∈ W, ((readers n C a).card - 2)) ≤ _
     have eR : (∑ a ∈ W, (if a=C.output then 0 else 1 : ℕ)) = R.card := by
       calc
         _ = ∑ a ∈ W, (if a≠C.output then 1 else 0 : ℕ) := by
@@ -702,17 +707,22 @@ theorem branch_budget (hC : Monotone2 C) (he : GraphEval C G)
     have eB : (∑ a ∈ W, (if Branch n C a then 1 else 0 : ℕ)) = B.card := by
       rw [← Finset.sum_filter]
       simp [B]
-    rw [← eR,← eB,← Finset.sum_add_distrib]
+    rw [← eR,← eB,← Finset.sum_add_distrib,← Finset.sum_add_distrib]
     apply Finset.sum_le_sum
     intro a ha
     have hl := (mem_living.1 ha).2
     by_cases heq : a=C.output
     · subst a
-      simp [hoNone]
+      simp only [ite_true,hoNone,ite_false,Nat.zero_add]
+      omega
     · by_cases hb : Branch n C a
       · have hb' : 2 ≤ (readers n C a).card := hb
-        simpa [heq,hb] using hb'
-      · simpa [heq,hb] using Nat.succ_le_of_lt (Finset.card_pos.2 (live_readers_nonempty hl heq))
+        simp only [heq,hb,ite_false,ite_true]
+        omega
+      · have nonzero := Finset.card_pos.2 (live_readers_nonempty hl heq)
+        have low : (readers n C a).card < 2 := Nat.lt_of_not_ge hb
+        simp only [heq,hb,ite_false]
+        omega
   have hcomm :
       (∑ a ∈ W, (readers n C a).card) =
         ∑ j ∈ W, (W.filter fun a => LNext n C a j).card := by
@@ -726,7 +736,7 @@ theorem branch_budget (hC : Monotone2 C) (he : GraphEval C G)
       simp [S,Finset.sum_ite, Nat.mul_comm]
     exact H.trans_eq e
   rw [hcomm] at hlow
-  change n+B.card ≤ C.gates.length+1
+  change n+B.card+excess n C ≤ C.gates.length+1
   omega
 
 end PlanePairs
@@ -734,15 +744,11 @@ end PlanePairs
 namespace PlanePairs
 
 theorem step614 :
-    ∀ (n t : ℕ) (G : SimpleGraph (Fin n)) (C : PEqualNP.CircuitLowerBounds.Circuit), (∀ v : Fin n, ∃ w : Fin n, G.Adj v w) → (∀ v w : Fin n, v ≠ w → ¬ G.Adj v w → 2 ≤ (G.neighborSet v).ncard → 2 ≤ (G.neighborSet w).ncard → ∃ u : Fin n, ¬ (G.Adj v u ↔ G.Adj w u)) → (∀ v w : Fin n, G.Adj v w → 2 ≤ (G.neighborSet v).ncard → 2 ≤ (G.neighborSet w).ncard → ∃ a b : Fin n, G.Adj v a ∧ a ≠ w ∧ G.Adj w b ∧ b ≠ v ∧ (a = b ∨ ¬ G.Adj a b)) → (∃ S : Finset (Fin n), (∀ u v : Fin n, G.Adj u v → 2 ≤ (G.neighborSet u).ncard → 2 ≤ (G.neighborSet v).ncard → u ∈ S ∨ v ∈ S) ∧ S.card = t) → (∀ S : Finset (Fin n), (∀ u v : Fin n, G.Adj u v → 2 ≤ (G.neighborSet u).ncard → 2 ≤ (G.neighborSet v).ncard → u ∈ S ∨ v ∈ S) → t ≤ S.card) → PEqualNP.MetaComplexity.Monotone2 C → GraphEval C G → n + t ≤ C.size + 1 := by
+    ∀ (n t : ℕ) (G : SimpleGraph (Fin n)) (C : PEqualNP.CircuitLowerBounds.Circuit), (∀ v : Fin n, ∃ w : Fin n, G.Adj v w) → (∀ v w : Fin n, v ≠ w → ¬ G.Adj v w → 2 ≤ (G.neighborSet v).ncard → 2 ≤ (G.neighborSet w).ncard → ∃ u : Fin n, ¬ (G.Adj v u ↔ G.Adj w u)) → (∀ v w : Fin n, G.Adj v w → 2 ≤ (G.neighborSet v).ncard → 2 ≤ (G.neighborSet w).ncard → ∃ a b : Fin n, G.Adj v a ∧ a ≠ w ∧ G.Adj w b ∧ b ≠ v ∧ (a = b ∨ ¬ G.Adj a b)) → (∃ S : Finset (Fin n), (∀ u v : Fin n, G.Adj u v → 2 ≤ (G.neighborSet u).ncard → 2 ≤ (G.neighborSet v).ncard → u ∈ S ∨ v ∈ S) ∧ S.card = t) → (∀ S : Finset (Fin n), (∀ u v : Fin n, G.Adj u v → 2 ≤ (G.neighborSet u).ncard → 2 ≤ (G.neighborSet v).ncard → u ∈ S ∨ v ∈ S) → t ≤ S.card) → PEqualNP.MetaComplexity.Monotone2 C → GraphEval C G → 0 < n → n + t + excess n C ≤ C.size + 1 := by
   open PlanePairs in
   classical
-  intro n t G C hdegree htwins hadj _ ht hC he
-  by_cases hn : n=0
-  · subst n
-    have ht0 := ht ∅ (fun u => Fin.elim0 u)
-    simp at ht0
-    omega
+  intro n t G C hdegree htwins hadj _ ht hC he hpos
+  have hn : n ≠ 0 := by omega
   have hE : GraphEval C G := he
   let v : Fin n := ⟨0, by omega⟩
   obtain ⟨w, hve⟩ := hdegree v
@@ -777,7 +783,8 @@ theorem step614 :
       rw [hf u hsu,hf v hsv] at huv
       exact branch_injective hC hE htwins hsu hsv hdu hdv huv
   have hbudget := branch_budget hC hE hdegree ho'
-  exact (Nat.add_le_add_left (htc.trans hcap) n).trans hbudget
+  change n+B.card+excess n C ≤ C.size + 1 at hbudget
+  omega
 
 end PlanePairs
 
@@ -961,7 +968,7 @@ end PlanePairs
 
 theorem PlanePairs :
     ∀ C : PEqualNP.CircuitLowerBounds.Circuit, PEqualNP.MetaComplexity.Monotone2 C →
-        PlanePairs.GraphEval C PlanePairs.Pl → 38 ≤ C.size := by
+        PlanePairs.GraphEval C PlanePairs.Pl → 38 + PlanePairs.excess 26 C ≤ C.size := by
   classical
   intro C hC he
   have hb := PlanePairs.step614 26 13 PlanePairs.Pl C
@@ -970,7 +977,7 @@ theorem PlanePairs :
     ⟨PlanePairs.cover, fun u v h _ _ => PlanePairs.cover_is u v h,
       PlanePairs.cover_card⟩
     (fun S hS => PlanePairs.cover_lower S hS)
-    hC he
+    hC he (by decide)
   omega
 
 namespace QuadranglePairCover
@@ -1116,7 +1123,7 @@ theorem fromCoverage (coverage : ∀ u v : Fin 26, ¬Pl.Adj u v →
     ∃ Q ∈ quadrangles singerLines3, (quadRow Q).getD u.val false = true ∧ (quadRow Q).getD v.val false = true)
     (C : Circuit) (h : IsAO2 26 C)
     (pos : ∀ p l : Fin 13, p ∈ singerLines3 l → C.eval (pairRow p l) = true)
-    (neg : ∀ Q ∈ quadrangles singerLines3, C.eval (quadRow Q) = false) : 38 ≤ C.size := by
+    (neg : ∀ Q ∈ quadrangles singerLines3, C.eval (quadRow Q) = false) : 38 + PlanePairs.excess 26 C ≤ C.size := by
   have hm : Monotone2 C := fun g hg => ⟨h.1 g hg, (h.2.2 g hg).le⟩
   apply PlanePairs C hm
   intro u v
@@ -1155,6 +1162,17 @@ end PEqualNP.Outside.QuadrangleSizeBound
 
 open PEqualNP.Outside.QuadrangleSizeBound
 
+theorem PEqualNP.Outside.QuadrangleSizeBound.withExcess :
+  ∀ C : PEqualNP.CircuitLowerBounds.Circuit, PEqualNP.TopForm.IsAO2 26 C →
+    (∀ p l : Fin 13, p ∈ PEqualNP.HeptadCover.singerLines3 l → C.eval
+      (List.ofFn (fun k : Fin 13 => decide (k = p)) ++ List.ofFn (fun k : Fin 13 => decide (k = l))) = true) →
+    (∀ Q ∈ PEqualNP.HeptadCover.quadrangles PEqualNP.HeptadCover.singerLines3,
+      C.eval (List.ofFn (fun p : Fin 13 => decide (p ∈ Q)) ++
+        List.ofFn (fun l : Fin 13 => decide (l ∈ PEqualNP.HeptadCover.missLines PEqualNP.HeptadCover.singerLines3 Q))) = false) →
+    38 + PEqualNP.Outside.QuadrangleSizeBound.PlanePairs.excess 26 C ≤ C.size := by
+  intro C hm pos neg
+  exact QuadrangleLower.fromCoverage QuadranglePairCover.nonedge C hm pos neg
+
 theorem PEqualNP.Outside.QuadrangleSizeBound :
   ∀ C : PEqualNP.CircuitLowerBounds.Circuit, PEqualNP.TopForm.IsAO2 26 C →
     (∀ p l : Fin 13, p ∈ PEqualNP.HeptadCover.singerLines3 l → C.eval
@@ -1164,4 +1182,5 @@ theorem PEqualNP.Outside.QuadrangleSizeBound :
         List.ofFn (fun l : Fin 13 => decide (l ∈ PEqualNP.HeptadCover.missLines PEqualNP.HeptadCover.singerLines3 Q))) = false) →
     38 ≤ C.size := by
   intro C hm pos neg
-  exact QuadrangleLower.fromCoverage QuadranglePairCover.nonedge C hm pos neg
+  have bound := PEqualNP.Outside.QuadrangleSizeBound.withExcess C hm pos neg
+  omega
